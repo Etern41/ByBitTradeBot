@@ -1,6 +1,12 @@
 import asyncio
 import logging
-from config import TRADE_PAIRS, ADMIN_CHAT_ID, TELEGRAM_API_TOKEN
+from config import (
+    TRADE_PAIRS,
+    ADMIN_CHAT_ID,
+    TELEGRAM_API_TOKEN,
+    AUTO_UPDATE_PAIRS,
+    UPDATE_INTERVAL,
+)
 from bybit_client import BybitAPI
 from indicators import IndicatorCalculator
 from telegram import Bot
@@ -20,6 +26,8 @@ bot = Bot(TELEGRAM_API_TOKEN)
 
 # ✅ Храним активные ордера
 active_orders = {pair: None for pair in TRADE_PAIRS}
+
+current_pairs = TRADE_PAIRS.copy()
 
 
 async def start_auto_trade():
@@ -107,6 +115,31 @@ async def trade_logic():
             )
         else:
             logging.error(f"❌ {pair}: Ошибка при размещении ордера")
+
+
+async def update_pairs():
+    """Обновляет список торговых пар раз в N минут"""
+    global current_pairs
+
+    while True:
+        if AUTO_UPDATE_PAIRS:
+            logging.info("🔄 Обновление списка торговых пар...")
+            new_pairs = bybit_client.get_trading_pairs()
+
+            # Фильтрация по волатильности (ATR)
+            filtered_pairs = []
+            for pair in new_pairs:
+                df = indicator_calc.get_historical_data(pair)
+                if df is not None and df.shape[0] > 50:
+                    atr = df["close"].rolling(50).std().mean()  # Оценка ATR
+                    if atr > 0.005:  # Исключаем "замороженные" пары
+                        filtered_pairs.append(pair)
+
+            if filtered_pairs:
+                current_pairs = filtered_pairs
+                logging.info(f"✅ Список пар обновлен ({len(filtered_pairs)} пар)")
+
+        await asyncio.sleep(UPDATE_INTERVAL)
 
 
 def calculate_order_size(balance, strength):

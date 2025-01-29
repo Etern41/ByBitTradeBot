@@ -4,6 +4,8 @@ import hmac
 import hashlib
 import json
 import uuid
+import logging
+import pandas as pd
 from config import BYBIT_API_KEY, BYBIT_API_SECRET, USE_TESTNET
 
 
@@ -50,11 +52,12 @@ class BybitAPI:
         )
 
         if response.status_code != 200:
-            print(
-                f"❌ Ошибка запроса {description}: HTTP {response.status_code} | {response.text}"
+            logging.error(
+                f"❌ Ошибка запроса {description}: {response.status_code} | {response.text}"
             )
+            return None
 
-        return response.json() if response.status_code == 200 else None
+        return response.json()
 
     def get_wallet_balance(self):
         """Получает баланс (Bybit API V5)"""
@@ -75,18 +78,39 @@ class BybitAPI:
             name = f"🔹 {coin['coin']}"
             amount = f"{float(coin['walletBalance']):,.4f}"
             usd_value = f"{float(coin.get('usdValue', 0)):.2f}"
-            table += (
-                f"{name.ljust(8)} | {amount.rjust(10)} | {usd_value.rjust(10)} USDT\n"
-            )
+            table += f"{name.ljust(8)} | {amount.rjust(10)} | {usd_value.rjust(10)} USDT\n"
 
         table += f"━━━━━━━━━━━━━━━━━━━━━\n💳 *Общий баланс:* {total_balance:,.2f} USDT"
         return table
+
+    def get_trading_pairs(self, min_volume=100000):
+        """Получает список ликвидных USDT-пар с Bybit"""
+        endpoint = "/v5/market/tickers"
+        payload = {"category": "spot"}
+        response = self._make_request(endpoint, "GET", payload, "Получение списка пар")
+
+        if not response or response.get("retCode") != 0:
+            logging.error(
+                f"❌ Ошибка API: {response.get('retMsg', 'Неизвестная ошибка')}"
+            )
+            return []
+
+        pairs = []
+        for ticker in response["result"]["list"]:
+            symbol = ticker["symbol"]
+            volume = float(ticker["turnover24h"])
+
+            if "USDT" in symbol and volume >= min_volume:
+                pairs.append(symbol)
+
+        logging.info(f"✅ Найдено {len(pairs)} ликвидных пар")
+        return pairs
 
     def get_kline(self, symbol, interval="60", limit=200):
         """Получает исторические данные свечей"""
         endpoint = "/v5/market/kline"
         payload = {
-            "category": "spot",  # Для фьючерсов заменить на "linear"
+            "category": "spot",
             "symbol": symbol,
             "interval": interval,
             "limit": str(limit),
@@ -94,3 +118,38 @@ class BybitAPI:
         return self._make_request(
             endpoint, "GET", payload, "Получение исторических данных"
         )
+
+    def filter_pairs_by_volatility(self, pairs, min_atr=0.005):
+        """Фильтрует пары по волатильности (ATR)"""
+        filtered_pairs = []
+        for pair in pairs:
+            kline_data = self.get_kline(pair)
+            if not kline_data or "result" not in kline_data:
+                continue
+
+            df = pd.DataFrame(
+                kline_data["result"]["list"],
+                columns=["timestamp", "open", "high", "low", "close", "volume"],
+            )
+            df["close"] = df["close"].astype(float)
+
+            # Рассчитываем ATR через стандартное отклонение цены закрытия
+            atr = df["close"].rolling(50).std().mean()
+            if atr > min_atr:
+                filtered_pairs.append(pair)
+
+        logging.info(f"✅ Отфильтровано {len(filtered_pairs)} волатильных пар")
+        return filtered_pairs
+
+
+    def get_available_pairs(self):
+        """Получает список всех доступных торговых пар на Bybit (SPOT)"""
+        endpoint = "/v5/market/instruments-info"
+        payload = {"category": "spot"}
+        response = self._make_request(endpoint, "GET", payload, "Получение списка пар")
+
+        if not response or response.get("retCode") != 0:
+            return []
+
+        pairs = [item["symbol"] for item in response["result"]["list"]]
+        return pairs

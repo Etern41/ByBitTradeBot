@@ -14,6 +14,9 @@ from autotrade import start_auto_trade, stop_auto_trade, auto_trade_active
 from bybit_client import BybitAPI
 from indicators import IndicatorCalculator
 from config import TELEGRAM_API_TOKEN, ADMIN_CHAT_ID, TRADE_PAIRS
+from pair_manager import PairManager
+
+pair_manager = PairManager()
 
 # ✅ Настройка логов
 logging.basicConfig(
@@ -140,6 +143,34 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
         )
 
 
+async def list_pairs(update: Update, context: CallbackContext) -> None:
+    """Команда /pairs: Показывает текущие торговые пары"""
+    pairs = pair_manager.get_pairs()
+    await update.message.reply_text("📌 Текущие пары:\n" + "\n".join(pairs))
+
+
+async def add_pair(update: Update, context: CallbackContext) -> None:
+    """Команда /addpair BTCUSDT: Добавляет новую пару"""
+    if len(context.args) != 1:
+        await update.message.reply_text("⚠️ Использование: /addpair BTCUSDT")
+        return
+
+    pair = context.args[0].upper()
+    response = pair_manager.add_pair(pair)
+    await update.message.reply_text(response)
+
+
+async def remove_pair(update: Update, context: CallbackContext) -> None:
+    """Команда /removepair BTCUSDT: Удаляет пару"""
+    if len(context.args) != 1:
+        await update.message.reply_text("⚠️ Использование: /removepair BTCUSDT")
+        return
+
+    pair = context.args[0].upper()
+    response = pair_manager.remove_pair(pair)
+    await update.message.reply_text(response)
+
+
 def main():
     """Запуск бота"""
     app = ApplicationBuilder().token(TELEGRAM_API_TOKEN).build()
@@ -149,6 +180,9 @@ def main():
     app.add_handler(CommandHandler("balance", balance))
     app.add_handler(CommandHandler("indicators", indicators))
     app.add_handler(CommandHandler("trade_pairs", trade_pairs))
+    app.add_handler(CommandHandler("pairs", list_pairs))
+    app.add_handler(CommandHandler("addpair", add_pair))
+    app.add_handler(CommandHandler("removepair", remove_pair))
 
     # ✅ Обработчик текстовых сообщений (кнопки)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
