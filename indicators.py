@@ -1,7 +1,7 @@
 import pandas as pd
 import ta
 from bybit_client import BybitAPI
-from config import TRADE_PAIRS
+from config import TRADE_PAIRS, TRADE_INTERVAL
 
 
 class IndicatorCalculator:
@@ -11,7 +11,7 @@ class IndicatorCalculator:
     def get_historical_data(self, symbol):
         """Получает исторические данные OHLCV для пары"""
         try:
-            response = self.client.get_kline(symbol)
+            response = self.client.get_kline(symbol, interval=TRADE_INTERVAL)
             if (
                 not response
                 or "result" not in response
@@ -22,7 +22,7 @@ class IndicatorCalculator:
 
             raw_data = response["result"]["list"]
 
-            # 🛠 Определяем колонки автоматически (6 или 7)
+            #
             columns = ["timestamp", "open", "high", "low", "close", "volume"]
             if len(raw_data[0]) == 7:
                 columns.append("turnover")
@@ -38,16 +38,19 @@ class IndicatorCalculator:
             print(f"❌ Ошибка загрузки данных для {symbol}: {e}")
             return None
 
-    def calculate_indicators(self):
+    def calculate_indicators(self, trade_pairs=None):
         """Анализирует все пары в TRADE_PAIRS и возвращает индикаторы"""
-        report = ""
+        if trade_pairs is None:
+            trade_pairs = TRADE_PAIRS
+        report = f"📊 *Анализ индикаторов (интервал: {TRADE_INTERVAL} мин)*\n\n"
 
-        for pair in TRADE_PAIRS:
+        for pair in trade_pairs:
             df = self.get_historical_data(pair)
             if df is None:
                 report += f"❌ {pair}: Ошибка загрузки данных\n"
                 continue
-
+            
+            
             # ✅ Рассчитываем RSI
             df["rsi"] = ta.momentum.RSIIndicator(df["close"], window=14).rsi()
 
@@ -92,7 +95,6 @@ class IndicatorCalculator:
 
         return report
 
-
     def generate_trade_signal(self, last_row):
         """Генерация сигнала на основе RSI, MACD, SMA"""
         required_columns = ["rsi", "macd", "macd_signal", "sma"]
@@ -100,7 +102,7 @@ class IndicatorCalculator:
         # ✅ Проверяем, есть ли все необходимые столбцы
         for col in required_columns:
             if col not in last_row:
-                
+
                 return "HOLD", 0  # ✅ Если нет данных, не торгуем
 
         signal = "HOLD"
@@ -118,11 +120,13 @@ class IndicatorCalculator:
 
         return signal, strength
 
-    def calculate_signals(self):
+    def calculate_signals(self, trade_pairs=None):
         """Анализирует все пары и возвращает сигналы в корректном формате"""
+        if trade_pairs is None:
+            trade_pairs = TRADE_PAIRS
         signals = {}
 
-        for pair in TRADE_PAIRS:
+        for pair in trade_pairs:
             df = self.get_historical_data(pair)
             if df is None:
                 signals[pair] = ("HOLD", 0)

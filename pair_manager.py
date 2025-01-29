@@ -1,43 +1,29 @@
 import json
-import os
-
-PAIRS_FILE = "pairs.json"
+from config import TRADE_PAIRS
 
 
 class PairManager:
+    """Менеджер торговых пар: загружает, обновляет и хранит пары"""
+
     def __init__(self):
-        """Инициализация менеджера пар"""
-        self.pairs = self._load_pairs()
+        self.pairs_file = "config.json"
+        self.active_pairs = self.load_pairs()
 
-    def _load_pairs(self):
-        """Загружает пары из файла"""
-        if not os.path.exists(PAIRS_FILE):
-            return ["BTCUSDT", "ETHUSDT", "BNBUSDT"]  # Дефолтные пары
+    def load_pairs(self):
+        """Загружает торговые пары из JSON или берёт из config.py"""
+        try:
+            with open(self.pairs_file, "r") as file:
+                data = json.load(file)
+                return data.get("TRADE_PAIRS", TRADE_PAIRS)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return TRADE_PAIRS  # Если нет файла, берём из config.py
 
-        with open(PAIRS_FILE, "r") as file:
-            return json.load(file)
+    def save_pairs(self, pairs):
+        """Сохраняет новые пары в config.json"""
+        self.active_pairs = pairs
+        with open(self.pairs_file, "w") as file:
+            json.dump({"TRADE_PAIRS": pairs}, file, indent=4)
 
-    def _save_pairs(self):
-        """Сохраняет пары в файл"""
-        with open(PAIRS_FILE, "w") as file:
-            json.dump(self.pairs, file)
-
-    def get_pairs(self):
-        """Возвращает текущий список пар"""
-        return self.pairs
-
-    def add_pair(self, pair):
-        """Добавляет новую пару"""
-        if pair not in self.pairs:
-            self.pairs.append(pair)
-            self._save_pairs()
-            return f"✅ Пара {pair} добавлена!"
-        return f"⚠️ Пара {pair} уже есть в списке!"
-
-    def remove_pair(self, pair):
-        """Удаляет пару"""
-        if pair in self.pairs:
-            self.pairs.remove(pair)
-            self._save_pairs()
-            return f"❌ Пара {pair} удалена!"
-        return f"⚠️ Пары {pair} нет в списке!"
+    def get_active_pairs(self):
+        """Возвращает актуальный список пар"""
+        return self.active_pairs
