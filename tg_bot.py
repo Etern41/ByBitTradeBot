@@ -9,12 +9,13 @@ from telegram.ext import (
     filters,
     CallbackContext,
 )
+
 from autotrade import start_auto_trade, stop_auto_trade, auto_trade_active
 from bybit_client import BybitAPI
 from indicators import IndicatorCalculator
-from config import TELEGRAM_API_TOKEN, TRADE_PAIRS, ADMIN_CHAT_ID
+from config import TELEGRAM_API_TOKEN, ADMIN_CHAT_ID, TRADE_PAIRS
 
-# Настройка логов
+# ✅ Настройка логов
 logging.basicConfig(
     level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s"
 )
@@ -66,19 +67,6 @@ async def start(update: Update, context: CallbackContext) -> None:
     )
 
 
-async def indicators(update: Update, context: CallbackContext) -> None:
-    """Команда /indicators: показывает RSI, MACD, SMA, BB в таблице"""
-    try:
-        result = indicator_calc.calculate_indicators()
-        if not result:
-            await update.message.reply_text("❌ Ошибка получения индикаторов")
-            return
-        await update.message.reply_text(result, parse_mode="Markdown")
-    except Exception as e:
-        logging.error(f"❌ Ошибка в /indicators: {e}")
-        await update.message.reply_text(f"❌ Ошибка: {e}")
-
-
 async def balance(update: Update, context: CallbackContext) -> None:
     """Команда /balance: показывает баланс аккаунта"""
     try:
@@ -92,21 +80,64 @@ async def balance(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
 
+async def indicators(update: Update, context: CallbackContext) -> None:
+    """Команда /indicators: анализирует RSI, MACD, SMA и возвращает таблицу"""
+    try:
+        result = indicator_calc.calculate_indicators()
+        if not result:
+            await update.message.reply_text("❌ Ошибка получения индикаторов")
+            return
+        await update.message.reply_text(result, parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"❌ Ошибка в /indicators: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+
+async def trade_pairs(update: Update, context: CallbackContext) -> None:
+    """Команда /trade_pairs: изменяет список торговых пар"""
+    keyboard = [[pair] for pair in TRADE_PAIRS]
+    keyboard.append(["✅ Сохранить"])
+
+    await update.message.reply_text(
+        "Выберите торговые пары (нажимайте для включения/выключения):",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+    )
+
+
 async def button_handler(update: Update, context: CallbackContext) -> None:
     """Обрабатывает кнопки меню"""
+    global auto_trade_active
     text = update.message.text
 
     if text == "▶️ Запустить автоторговлю":
-        await update.message.reply_text(start_auto_trade())
+        if auto_trade_active:
+            await update.message.reply_text("⚠️ Автоторговля уже запущена!")
+        else:
+            auto_trade_active = True
+            asyncio.create_task(start_auto_trade())  # ✅ Запуск автоторговли в фоне
+            await update.message.reply_text("✅ Автоторговля запущена!")
 
     elif text == "⏹ Остановить автоторговлю":
-        await update.message.reply_text(stop_auto_trade())
+        if not auto_trade_active:
+            await update.message.reply_text("⚠️ Автоторговля уже остановлена!")
+        else:
+            auto_trade_active = False
+            await update.message.reply_text(stop_auto_trade())
 
     elif text == "📊 Баланс":
         await balance(update, context)
 
     elif text == "📈 Индикаторы":
         await indicators(update, context)
+
+    elif text == "⚙️ Управление парами":
+        await trade_pairs(update, context)
+
+    elif text == "✅ Сохранить":
+        await update.message.reply_text(
+            f"✅ Торговые пары сохранены: {', '.join(TRADE_PAIRS)}",
+            reply_markup=main_menu(),
+        )
 
 
 def main():
@@ -115,8 +146,9 @@ def main():
 
     # ✅ Добавляем обработчики команд
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("indicators", indicators))
     app.add_handler(CommandHandler("balance", balance))
+    app.add_handler(CommandHandler("indicators", indicators))
+    app.add_handler(CommandHandler("trade_pairs", trade_pairs))
 
     # ✅ Обработчик текстовых сообщений (кнопки)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))

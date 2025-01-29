@@ -1,105 +1,116 @@
 import asyncio
-from config import TRADE_PAIRS
-from indicators import IndicatorCalculator
+import logging
+from config import TRADE_PAIRS, ADMIN_CHAT_ID, TELEGRAM_API_TOKEN
 from bybit_client import BybitAPI
-import numpy as np
+from indicators import IndicatorCalculator
+from telegram import Bot
 
-indicator_calc = IndicatorCalculator()
-bybit_client = BybitAPI()
+# ✅ Настройка логов
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
+# ✅ Глобальная переменная для статуса автоторговли
 auto_trade_active = False
-auto_trade_task = None  # Фоновая задача
+
+# ✅ Инициализация API и индикаторов
+bybit_client = BybitAPI()
+indicator_calc = IndicatorCalculator()
+bot = Bot(TELEGRAM_API_TOKEN)
+
+# ✅ Храним активные ордера
+active_orders = {pair: None for pair in TRADE_PAIRS}
 
 
-def calculate_trade_size(balance, signal_strength, atr):
-    """Динамический расчет размера ордера с учетом силы сигнала и ATR"""
-    risk_percent = {1: 2, 2: 5, 3: 10}  # % от баланса в зависимости от силы сигнала
-    atr_multiplier = np.clip(
-        atr / 10, 0.5, 2
-    )  # Усиление от ATR (если волатильность высокая)
-
-    percent = risk_percent.get(signal_strength, 0) * atr_multiplier
-    trade_size = (balance * percent) / 100
-
-    return round(trade_size, 4)
-
-
-def calculate_sl_tp(last_price, signal, strength, atr):
-    """Динамический расчет стоп-лосса (SL) и тейк-профита (TP)"""
-    atr_factor = {1: 0.5, 2: 1, 3: 1.5}  # SL/TP множитель от ATR
-    factor = atr_factor.get(strength, 0.5) * atr
-
-    sl = last_price - factor if signal == "BUY" else last_price + factor
-    tp = last_price + (factor * 2) if signal == "BUY" else last_price - (factor * 2)
-
-    return round(sl, 2), round(tp, 2)
-
-
-async def auto_trade():
-    """Основной цикл автоторговли"""
+async def start_auto_trade():
+    """Асинхронный запуск автоторговли"""
     global auto_trade_active
-    while auto_trade_active:
-        balance = bybit_client.get_wallet_balance()
-        if not balance:
-            print("❌ Ошибка получения баланса!")
-            await asyncio.sleep(60)
-            continue
-
-        balance_value = float(
-            balance.split("*Общий баланс:* ")[1].split(" ")[0].replace(",", "")
-        )
-
-        for pair in TRADE_PAIRS:
-            df = indicator_calc.get_historical_data(pair)
-            if df is None:
-                print(f"❌ Ошибка данных {pair}")
-                continue
-
-            signal, strength = indicator_calc.calculate_signal_strength(df)
-            if strength == 0:
-                continue  # Пропускаем нейтральные сигналы
-
-            # Фильтрация ложных сигналов
-            valid_signal, reason = indicator_calc.filter_fake_signals(df)
-            if not valid_signal:
-                print(f"🚫 Пропущен сигнал для {pair} ({reason})")
-                continue
-
-            atr = indicator_calc.calculate_atr(df)  # Новый расчет ATR
-            trade_size = calculate_trade_size(balance_value, strength, atr)
-            last_price = df.iloc[-1]["close"]
-            sl, tp = calculate_sl_tp(last_price, signal, strength, atr)
-
-            print(
-                f"📊 {pair}: {signal} (Сила: {strength}) | Объем: {trade_size} | SL: {sl} | TP: {tp}"
-            )
-
-            # Отправляем ордер
-            side = "Buy" if signal == "🟢 Покупка" else "Sell"
-            order = bybit_client.create_order(
-                pair, side, trade_size, price=None, order_type="Market"
-            )
-            print(f"✅ Ордер: {order}")
-
-        await asyncio.sleep(60)  # Интервал анализа
-
-
-def start_auto_trade():
-    """Запускает автоторговлю"""
-    global auto_trade_active, auto_trade_task
     if auto_trade_active:
-        return "⚙️ Автоторговля уже запущена!"
+        return "⚠️ Автоторговля уже запущена!"
+
     auto_trade_active = True
-    auto_trade_task = asyncio.create_task(auto_trade())
-    return "⚙️ Автоторговля запущена!"
+    logging.info("✅ Автоторговля запущена!")
+
+    while auto_trade_active:
+        try:
+            await trade_logic()  # ⚡ Асинхронная проверка сигналов
+            await asyncio.sleep(30)  # 🔄 Ждём 30 секунд перед следующей проверкой
+        except Exception as e:
+            logging.error(f"❌ Ошибка в автоторговле: {e}")
+            await bot.send_message(ADMIN_CHAT_ID, f"❌ Ошибка в автоторговле: {e}")
+
+    logging.info("⏹ Автоторговля остановлена!")
 
 
 def stop_auto_trade():
     """Останавливает автоторговлю"""
-    global auto_trade_active, auto_trade_task
-    if not auto_trade_active:
-        return "⏹ Автоторговля уже остановлена!"
+    global auto_trade_active
     auto_trade_active = False
-    if auto_trade_task:
-        auto_trade_task.cancel()
+    logging.info("⏹ Автоторговля остановлена!")
     return "⏹ Автоторговля остановлена!"
+
+
+async def trade_logic():
+    """Основная логика принятия решений"""
+    global active_orders
+
+    # ✅ Не отправляем проверку сигналов, если автоторговля выключена
+    if not auto_trade_active:
+        return
+
+    signals = indicator_calc.calculate_signals()
+
+    # ✅ Формируем отчет о проверке сигналов
+    report = "📡 *Проверка сигналов*\n"
+    for pair, (signal, strength) in signals.items():
+        report += f"📊 {pair}: {signal} (Сила: {strength})\n"
+
+    # ✅ Отправляем отчет о проверке в Telegram (раз в цикл)
+    if auto_trade_active:
+        await bot.send_message(ADMIN_CHAT_ID, report, parse_mode="Markdown")
+
+    for pair, (signal, strength) in signals.items():
+        # ✅ Игнорируем слабые сигналы
+        if strength < 1:
+            continue
+
+        # ✅ Проверяем, есть ли уже активный ордер
+        if active_orders.get(pair):
+            logging.info(f"⚠️ {pair}: Уже есть активный ордер, пропускаем.")
+            continue
+
+        # ✅ Получаем баланс
+        balance = bybit_client.get_balance("USDT")
+        if balance is None:
+            logging.warning("❌ Ошибка получения баланса!")
+            continue
+
+        # ✅ Рассчитываем объем ордера
+        order_size = calculate_order_size(balance, strength)
+        if order_size == 0:
+            logging.warning(f"⚠️ {pair}: Слишком маленький баланс для сделки")
+            continue
+
+        # ✅ Размещение ордера
+        side = "Buy" if signal == "BUY" else "Sell"
+        response = await bybit_client.create_order(pair, side, order_size)
+
+        if response:
+            logging.info(f"✅ {pair}: Ордер {side} на {order_size} USDT размещен!")
+            active_orders[pair] = response.get("orderId")
+
+            # ✅ Уведомление в Telegram о новом ордере
+            await bot.send_message(
+                ADMIN_CHAT_ID,
+                f"✅ *{pair}*: Открыт ордер `{side}` на *{order_size}* USDT",
+                parse_mode="Markdown",
+            )
+        else:
+            logging.error(f"❌ {pair}: Ошибка при размещении ордера")
+
+
+def calculate_order_size(balance, strength):
+    """Динамически рассчитывает объем ордера"""
+    percent = 0.01 * strength  # Слабый сигнал - 1%, сильный - 2%, максимум - 5%
+    order_size = balance * min(percent, 0.05)  # 🔥 Не больше 5% баланса
+    return round(order_size, 2)  # Округляем до 2 знаков

@@ -22,7 +22,7 @@ class IndicatorCalculator:
 
             raw_data = response["result"]["list"]
 
-            # Определяем количество колонок
+            # 🛠 Определяем колонки автоматически (6 или 7)
             columns = ["timestamp", "open", "high", "low", "close", "volume"]
             if len(raw_data[0]) == 7:
                 columns.append("turnover")
@@ -40,66 +40,98 @@ class IndicatorCalculator:
 
     def calculate_indicators(self):
         """Анализирует все пары в TRADE_PAIRS и возвращает индикаторы"""
-        table = ""
+        report = ""
 
         for pair in TRADE_PAIRS:
             df = self.get_historical_data(pair)
             if df is None:
-                table += f"📊 {pair}\n❌ Ошибка загрузки данных\n\n"
+                report += f"❌ {pair}: Ошибка загрузки данных\n"
                 continue
 
-            # RSI и его целевые уровни
-            rsi = ta.momentum.RSIIndicator(df["close"], window=14).rsi()
-            rsi_last = rsi.iloc[-1]
-            rsi_signal = "Цель: 30 (Покупка) / 70 (Продажа)"
+            # ✅ Рассчитываем RSI
+            df["rsi"] = ta.momentum.RSIIndicator(df["close"], window=14).rsi()
 
-            # MACD и сигнал
+            # ✅ Рассчитываем MACD
             macd = ta.trend.MACD(df["close"])
-            macd_last = macd.macd().iloc[-1]
-            macd_signal = macd.macd_signal().iloc[-1]
+            df["macd"] = macd.macd()
+            df["macd_signal"] = macd.macd_signal()
 
-            # SMA 50 и SMA 200
-            sma_50 = ta.trend.SMAIndicator(df["close"], window=50).sma_indicator()
-            sma_200 = ta.trend.SMAIndicator(df["close"], window=200).sma_indicator()
-            sma_50_last = round(sma_50.iloc[-1], 2)
-            sma_200_last = round(sma_200.iloc[-1], 2)
+            # ✅ Рассчитываем SMA (50 и 200)
+            df["sma_50"] = ta.trend.SMAIndicator(df["close"], window=50).sma_indicator()
+            df["sma_200"] = ta.trend.SMAIndicator(
+                df["close"], window=200
+            ).sma_indicator()
 
-            # Bollinger Bands
+            # ✅ Рассчитываем Bollinger Bands
             bb = ta.volatility.BollingerBands(df["close"], window=20, window_dev=2)
-            bb_high = bb.bollinger_hband().iloc[-1]
-            bb_low = bb.bollinger_lband().iloc[-1]
-            bb_signal = f"{bb_low:.2f} / {bb_high:.2f}"
+            df["bb_high"] = bb.bollinger_hband()
+            df["bb_low"] = bb.bollinger_lband()
 
-            # ATR (Средний истинный диапазон)
+            # ✅ Рассчитываем ATR (14)
             atr = ta.volatility.AverageTrueRange(
                 df["high"], df["low"], df["close"], window=14
-            ).average_true_range()
-            atr_last = atr.iloc[-1]
-            atr_avg = atr.mean()
+            )
+            df["atr"] = atr.average_true_range()
 
-            # Генерация торгового сигнала
-            signal = self.generate_trade_signal(rsi_last, macd_last, macd_signal)
+            # ✅ Последняя строка
+            last_row = df.iloc[-1]
 
-            # Формируем текст
-            table += (
-                f"📊 {pair}\n"
-                f"🔹 RSI: {rsi_last:.2f} ({rsi_signal})\n"
-                f"🔹 MACD: {macd_last:.2f} (Signal: {macd_signal:.2f})\n"
-                f"🔹 SMA 50/200: {sma_50_last} / {sma_200_last}\n"
-                f"🔹 BB High/Low: {bb_signal}\n"
-                f"🔹 ATR: {atr_last:.2f} (Средний: {atr_avg:.2f})\n"
+            # ✅ Генерируем сигнал
+            signal, strength = self.generate_trade_signal(last_row)
+
+            # ✅ Добавляем данные в отчет
+            report += (
+                f"📊 *{pair}*\n"
+                f"🔹 RSI: {last_row['rsi']:.2f} (Цель: 30 (Покупка) / 70 (Продажа))\n"
+                f"🔹 MACD: {last_row['macd']:.2f} (Signal: {last_row['macd_signal']:.2f})\n"
+                f"🔹 SMA 50/200: {last_row['sma_50']:.2f} / {last_row['sma_200']:.2f}\n"
+                f"🔹 BB High/Low: {last_row['bb_high']:.2f} / {last_row['bb_low']:.2f}\n"
+                f"🔹 ATR: {last_row['atr']:.2f} (Средний: {df['atr'].mean():.2f})\n"
                 f"📢 Сигнал: {signal}\n\n"
             )
 
-        return table
+        return report
 
-    def generate_trade_signal(self, rsi, macd, macd_signal):
-        """Определяет торговый сигнал"""
-        signal = "⚪ Нейтральный (Сила: 0)"
 
-        if rsi < 30 and macd > macd_signal:
-            signal = "🟢 Покупка (Сильный)" if rsi < 20 else "🟢 Покупка (Слабый)"
-        elif rsi > 70 and macd < macd_signal:
-            signal = "🔴 Продажа (Сильный)" if rsi > 80 else "🔴 Продажа (Слабый)"
+    def generate_trade_signal(self, last_row):
+        """Генерация сигнала на основе RSI, MACD, SMA"""
+        required_columns = ["rsi", "macd", "macd_signal", "sma"]
 
-        return signal
+        # ✅ Проверяем, есть ли все необходимые столбцы
+        for col in required_columns:
+            if col not in last_row:
+                
+                return "HOLD", 0  # ✅ Если нет данных, не торгуем
+
+        signal = "HOLD"
+        strength = 0
+
+        # 🔥 Покупка (Слабый сигнал: RSI < 30, сильный сигнал: RSI < 20)
+        if last_row["rsi"] < 30 and last_row["macd"] > last_row["macd_signal"]:
+            signal = "BUY"
+            strength = 1 if last_row["rsi"] > 20 else 2  # Чем ниже RSI, тем сильнее сигнал
+
+        # 🔥 Продажа (Слабый сигнал: RSI > 70, сильный сигнал: RSI > 80)
+        elif last_row["rsi"] > 70 and last_row["macd"] < last_row["macd_signal"]:
+            signal = "SELL"
+            strength = 1 if last_row["rsi"] < 80 else 2  # Чем выше RSI, тем сильнее сигнал
+
+        return signal, strength
+
+    def calculate_signals(self):
+        """Анализирует все пары и возвращает сигналы в корректном формате"""
+        signals = {}
+
+        for pair in TRADE_PAIRS:
+            df = self.get_historical_data(pair)
+            if df is None:
+                signals[pair] = ("HOLD", 0)
+                continue
+
+            last_row = df.iloc[-1]
+            signal, strength = self.generate_trade_signal(last_row)
+
+            # ✅ Записываем результат в правильном формате
+            signals[pair] = (signal, strength)
+
+        return signals
