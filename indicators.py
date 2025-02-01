@@ -35,7 +35,7 @@ class IndicatorCalculator:
             return None
 
     def calculate_indicators(self, trade_pairs=None):
-        """Анализирует все пары и возвращает индикаторы с эмоджи"""
+        """Анализирует все пары и возвращает индикаторы"""
         if trade_pairs is None:
             trade_pairs = TRADE_PAIRS
         report = f"📊 *Анализ индикаторов (интервал: {TRADE_INTERVAL} мин)*\n\n"
@@ -78,19 +78,8 @@ class IndicatorCalculator:
 
         return report
 
-
     def generate_trade_signal(self, last_row):
-        """
-        Генерация сигнала с использованием связок индикаторов.
-        Для BUY требуются:
-        - RSI < 30
-        - MACD > MACD_Signal
-        - Цена не более чем на 2% выше нижней границы Bollinger
-        - ATR ниже порога (например, < 10)
-        - Цена выше SMA50
-        Для SELL – зеркальное условие.
-        Если выполнено хотя бы 3 условия, возвращается сигнал с силой равной количеству выполненных условий.
-        """
+        """Генерация сигнала с использованием связок индикаторов."""
         signal = "HOLD"
         strength = 0
         price = last_row["close"]
@@ -101,10 +90,9 @@ class IndicatorCalculator:
             buy_conditions += 1
         if last_row["macd"] > last_row["macd_signal"]:
             buy_conditions += 1
-        # Допустим, разрешаем 2% отклонение от нижней границы
         if price <= last_row["bb_low"] * 1.02:
             buy_conditions += 1
-        if last_row["atr"] < 10:  # порог ATR (настраивается эмпирически)
+        if last_row["atr"] < 10:
             buy_conditions += 1
         if price > last_row["sma_50"]:
             buy_conditions += 1
@@ -144,7 +132,6 @@ class IndicatorCalculator:
                 continue
 
             try:
-                # Рассчитываем индикаторы для вычисления торгового сигнала
                 df["rsi"] = ta.momentum.RSIIndicator(df["close"], window=14).rsi()
                 macd = ta.trend.MACD(df["close"])
                 df["macd"] = macd.macd()
@@ -197,10 +184,8 @@ def get_macd_emoji(macd, macd_signal):
 
 
 def get_sma_emoji(sma50, sma200, price):
-    # Если цена выше SMA50 и SMA50 выше SMA200 – бычье состояние (зелёный)
     if price > sma50 and sma50 > sma200:
         return "🟢"
-    # Если цена ниже SMA50 и SMA50 ниже SMA200 – медвежье (красный)
     elif price < sma50 and sma50 < sma200:
         return "🔴"
     else:
@@ -208,8 +193,6 @@ def get_sma_emoji(sma50, sma200, price):
 
 
 def get_bb_emoji(price, bb_low, bb_high):
-    # Если цена близка к нижней границе – сигнал на покупку (зелёный),
-    # если к верхней – сигнал на продажу (красный), иначе нейтральный (оранжевый)
     if price <= bb_low:
         return "🟢"
     elif price >= bb_high:
@@ -219,7 +202,6 @@ def get_bb_emoji(price, bb_low, bb_high):
 
 
 def get_atr_emoji(atr):
-    # Здесь можно задать произвольные пороги; для примера:
     if atr < 1:
         return "🟢"
     elif atr > 50:
@@ -229,7 +211,6 @@ def get_atr_emoji(atr):
 
 
 def get_signal_emoji(signal):
-    # Композитный эмоджи определяется только по типу сигнала
     if signal == "BUY":
         return "🟢"
     elif signal == "SELL":

@@ -16,7 +16,7 @@ from autotrade import (
     stop_auto_trade,
     update_trade_pairs,
     auto_trade_active,
-    active_orders
+    active_orders,
 )
 from bybit_client import BybitAPI
 from indicators import IndicatorCalculator
@@ -26,7 +26,7 @@ from pair_manager import PairManager
 pair_manager = PairManager()
 
 
-# ✅ Настройка логов
+# Настройка логов
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -43,9 +43,9 @@ indicator_calc = IndicatorCalculator()
 
 def load_trade_pairs():
     try:
-        with open("config.json", "r") as file:
+        with open("active_pairs.json", "r") as file:
             config_data = json.load(file)
-            return config_data.get("TRADE_PAIRS", [])  # ✅ Загружаем пары
+            return config_data.get("TRADE_PAIRS", [])
     except (FileNotFoundError, json.JSONDecodeError):
         return []
 
@@ -83,7 +83,7 @@ async def send_startup_message(application: Application):
     try:
         await application.bot.send_message(
             chat_id=ADMIN_CHAT_ID,
-            text="✅ Бот успешно запущен и готов к работе!\nВы можете управлять ботом через меню.",
+            text="✅ Бот успешно запущен и готов к работе!\nВы можете управлять ботом через меню.\nОтправьте /start.",
         )
     except Exception as e:
         logging.error(f"❌ Ошибка отправки startup message: {e}")
@@ -103,7 +103,7 @@ async def balance(update: Update, context: CallbackContext) -> None:
         if not result:
             await update.message.reply_text("❌ Ошибка получения баланса")
             return
-        # Экранируем нижние подчеркивания, чтобы Markdown правильно их обработал.
+
         result = result.replace("_", r"\_")
         await update.message.reply_text(result, parse_mode="Markdown")
     except Exception as e:
@@ -146,8 +146,8 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
         if not auto_trade_active:
             await update.message.reply_text("⚠️ Автоторговля уже остановлена!")
         else:
-            auto_trade_active = False
-            await update.message.reply_text("⏹ Автоторговля остановлена!")
+            stop_message = stop_auto_trade()
+            await update.message.reply_text(stop_message)
     elif text == "📊 Баланс":
         await balance(update, context)
     elif text == "📈 Индикаторы":
@@ -169,14 +169,13 @@ def main():
     app.add_handler(CommandHandler("balance", balance))
     app.add_handler(CommandHandler("indicators", indicators))
     app.add_handler(CommandHandler("update_pairs", update_pairs))
-    app.add_handler(CommandHandler("positions", positions))  # Новый обработчик
+    app.add_handler(CommandHandler("positions", positions))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
 
     loop = asyncio.get_event_loop()
     loop.create_task(send_startup_message(app))
 
-    print("📡 Бот запущен, начинаю polling...")
     app.run_polling()
 
 
