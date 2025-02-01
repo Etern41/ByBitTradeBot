@@ -16,6 +16,7 @@ from autotrade import (
     stop_auto_trade,
     update_trade_pairs,
     auto_trade_active,
+    active_orders
 )
 from bybit_client import BybitAPI
 from indicators import IndicatorCalculator
@@ -49,17 +50,32 @@ def load_trade_pairs():
         return []
 
 
-TRADE_PAIRS = load_trade_pairs()
 def main_menu():
     """Возвращает клавиатуру главного меню"""
     return ReplyKeyboardMarkup(
         [
             ["▶️ Запустить автоторговлю", "⏹ Остановить автоторговлю"],
             ["📊 Баланс", "📈 Индикаторы"],
-            ["🔄 Обновить торговые пары"],
+            ["🔄 Обновить торговые пары", "📉 Позиции"],
         ],
         resize_keyboard=True,
     )
+
+
+async def positions(update: Update, context: CallbackContext) -> None:
+    """Команда /positions: показывает активные позиции с данными трейлинга"""
+    if not active_orders:
+        await update.message.reply_text("Нет активных позиций.")
+        return
+    msg = "📉 *Активные позиции:*\n"
+    for pair, info in active_orders.items():
+        if info:
+            msg += (
+                f"• {pair}: Ордер {info.get('order_id')}, "
+                f"Сторона: {info.get('side')}, Вход: {info.get('entry_price'):.2f}, "
+                f"Размер: {info.get('order_size')} USDT\n"
+            )
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 async def send_startup_message(application: Application):
@@ -83,10 +99,12 @@ async def start(update: Update, context: CallbackContext) -> None:
 async def balance(update: Update, context: CallbackContext) -> None:
     """Команда /balance: показывает баланс аккаунта"""
     try:
-        result = bybit_client.get_wallet_balance()
+        result = bybit_client.get_wallet_balance(as_report=True)
         if not result:
             await update.message.reply_text("❌ Ошибка получения баланса")
             return
+        # Экранируем нижние подчеркивания, чтобы Markdown правильно их обработал.
+        result = result.replace("_", r"\_")
         await update.message.reply_text(result, parse_mode="Markdown")
     except Exception as e:
         logging.error(f"❌ Ошибка в /balance: {e}")
@@ -115,7 +133,6 @@ async def update_pairs(update: Update, context: CallbackContext):
 
 
 async def button_handler(update: Update, context: CallbackContext) -> None:
-    """Обрабатывает кнопки меню"""
     global auto_trade_active
     text = update.message.text
 
@@ -124,41 +141,36 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
             await update.message.reply_text("⚠️ Автоторговля уже запущена!")
         else:
             auto_trade_active = True
-            asyncio.create_task(start_auto_trade())  # ✅ Запуск автоторговли в фоне
-            await update.message.reply_text("✅ Автоторговля запущена!")
-
+            asyncio.create_task(start_auto_trade())
     elif text == "⏹ Остановить автоторговлю":
         if not auto_trade_active:
             await update.message.reply_text("⚠️ Автоторговля уже остановлена!")
         else:
             auto_trade_active = False
-            await update.message.reply_text(stop_auto_trade())
-
+            await update.message.reply_text("⏹ Автоторговля остановлена!")
     elif text == "📊 Баланс":
         await balance(update, context)
-
     elif text == "📈 Индикаторы":
         await indicators(update, context)
-
     elif text == "🔄 Обновить торговые пары":
         await update_pairs(update, context)
         await update.message.reply_text(
             f"✅ Торговые пары сохранены: {', '.join(TRADE_PAIRS)}",
             reply_markup=main_menu(),
         )
+    elif text == "📉 Позиции":
+        await positions(update, context)
 
 
 def main():
-    """Запуск бота"""
     app = ApplicationBuilder().token(TELEGRAM_API_TOKEN).build()
 
-    # ✅ Добавляем обработчики команд
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("balance", balance))
     app.add_handler(CommandHandler("indicators", indicators))
     app.add_handler(CommandHandler("update_pairs", update_pairs))
+    app.add_handler(CommandHandler("positions", positions))  # Новый обработчик
 
-    # ✅ Обработчик текстовых сообщений (кнопки)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
 
     loop = asyncio.get_event_loop()

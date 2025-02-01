@@ -4,16 +4,16 @@
         "ETHUSDT",
         "SOLUSDT",
         "XRPUSDT",
-        "WIFUSDT",
+        "VIRTUALUSDT",
+        "GPSUSDT",
         "PEPEUSDT",
         "TRUMPUSDT",
         "DOGEUSDT",
-        "PLUMEUSDT",
         "SUIUSDT",
-        "ONDOUSDT",
-        "GPSUSDT",
         "LINKUSDT",
-        "ADAUSDT",
-        "ENAUSDT"
+        "PLUMEUSDT",
+        "ONDOUSDT",
+        "WIFUSDT",
+        "LTCUSDT"
     ]
 }
